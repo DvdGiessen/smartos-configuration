@@ -1,0 +1,270 @@
+#!/bin/sh
+set -eu
+
+# Check environment
+if [ "$(id -u)" != '0' ]; then
+   echo >&2 'ERROR: This script must be run as root'
+   exit 1
+fi
+if [ "$(zonename)" != 'global' ] ; then
+    echo >&2 'ERROR: This script must be run from the global zone.'
+    exit 1
+fi
+
+# Usage / help text
+print_usage() {
+    echo "Usage: $(basename "$0") [--dry-run] [--minimal|--lx|--kvm|--bhyve] [--image image-name] [--delegate-zfs-dataset] [--vlan vlan-id] name [additional-json]"
+    echo ""
+    exit 1
+}
+
+# Define argument variables
+DRY_RUN=false
+ZONE_NAME=''
+ZONE_BRAND='joyent'
+DELEGATE_ZFS_DATASET='false'
+IMAGE_NAME=''
+VLAN_ID='0'
+ADDITIONAL_JSON=''
+
+# Check and parse arguments
+I=0
+while [ $# -ge 1 ] ; do
+    case "$1" in
+        "-?"|-h|--help)
+            print_usage
+        ;;
+        --dry-run)
+            DRY_RUN=true
+        ;;
+        --minimal)
+            ZONE_BRAND='joyent-minimal'
+        ;;
+        --lx)
+            ZONE_BRAND='lx'
+        ;;
+        --kvm)
+            ZONE_BRAND='kvm'
+        ;;
+        --bhyve)
+            ZONE_BRAND='bhyve'
+        ;;
+        --image)
+            if [ $# -le 1 ] ; then
+                echo >&2 "Missing argument for $1"
+                exit 1
+            fi
+            IMAGE_NAME="$2"
+            shift
+        ;;
+        --delegate-zfs-dataset)
+            DELEGATE_ZFS_DATASET='true'
+        ;;
+        --vlan)
+            if [ $# -le 1 ] ; then
+                echo >&2 "Missing argument for $1"
+                exit 1
+            fi
+            VLAN_ID="$2"
+            shift
+        ;;
+        *)
+            case $I in
+                0)
+                    ZONE_NAME="$1"
+                ;;
+                1)
+                    ADDITIONAL_JSON="$1"
+                ;;
+                *)
+                    echo >&2 "Unknown parameter \"$1\""
+                    exit 1
+                ;;
+            esac
+            I=$((I+1))
+        ;;
+    esac
+    shift
+done
+if [ $I -lt 1 ] ; then
+    print_usage
+fi
+
+# Check if the zone name is valid
+if echo "$ZONE_NAME" | ! grep -qxE '^[a-z][a-z0-9]*(-[a-z0-9]+)*$' ; then
+    echo >&2 "Invalid zone name: $ZONE_NAME"
+    echo >&2 'Zone names should match ^[a-z][a-z0-9]*(-[a-z0-9]+)*$'
+    exit 1
+fi
+
+# Check whether the VLAN ID is valid
+if [ -n "$VLAN_ID" ] && echo "$VLAN_ID" | ! grep -qxE '^(0|[1-9][0-9]{0,2}|[1-3][0-9]{3}|40([0-8][0-9]|9[0-4]))$' ; then
+    echo >&2 "Invalid VLAN ID: $VLAN_ID"
+    echo >&2 "VLAN ID should be a number between 1 and 4094, or 0 for untagged (default)"
+    exit 1
+fi
+
+# Check if additional JSON is valid
+if [ -n "$ADDITIONAL_JSON" ] && ! echo "$ADDITIONAL_JSON" | json --validate -q ; then
+    echo >&2 "Invalid additional JSON:"
+    echo "$ADDITIONAL_JSON" | json --validate >&2
+    exit 1
+fi
+
+# Check whether zone name already exists
+ZONE_UUID="$(vmadm lookup alias="$ZONE_NAME")"
+if [ -n "$ZONE_UUID" ] ; then
+    echo >&2 "ERROR: Zone \"$ZONE_NAME\" already exists!"
+    exit 1
+fi
+
+# ZFS dataset delegation is not supported for hardware VM zones
+if { [ "$ZONE_BRAND" = 'kvm' ] || [ "$ZONE_BRAND" = 'bhyve' ]; } && [ "$DELEGATE_ZFS_DATASET" = 'true' ] ; then
+    echo >&2 "ERROR: Cannot delegate dataset for hardware VM zones!"
+    exit 1
+fi
+
+# Import base image
+if ! $DRY_RUN ; then
+    echo 'Retrieving dataset...'
+fi
+if [ -z "$IMAGE_NAME" ] ; then
+    imgadm update
+fi
+IMAGE_FILTER='type=zone-dataset'
+IMAGE_SOURCE_FILTER='-'
+IMAGE_IGNORE_FILTER='^$'
+if [ "$ZONE_BRAND" = 'lx' ] ; then
+    IMAGE_FILTER='type=lx-dataset'
+fi
+if [ "$ZONE_BRAND" = 'kvm' ] || [ "$ZONE_BRAND" = 'bhyve' ] ; then
+    IMAGE_FILTER='type=zvol'
+fi
+if [ -z "$IMAGE_NAME" ] ; then
+    IMAGE_NAME='base-64-lts'
+    IMAGE_SOURCE_FILTER='images.smartos.org'
+    IMAGE_IGNORE_FILTER='-(es|trunk)$'
+    if [ "$ZONE_BRAND" = 'joyent-minimal' ] ; then
+        IMAGE_NAME='minimal-64-lts'
+    fi
+    if [ "$ZONE_BRAND" = 'lx' ] ; then
+        IMAGE_NAME="$(imgadm avail "$IMAGE_FILTER" -H -o name -s -version,-name,-published_at,uuid | grep -E '^debian-')"
+    fi
+    if [ "$ZONE_BRAND" = 'kvm' ] || [ "$ZONE_BRAND" = 'bhyve' ] ; then
+        IMAGE_NAME="$(imgadm avail "$IMAGE_FILTER" -H -o name -s -version,-name,-published_at,uuid | grep -E '^debian-')"
+        IMAGE_SOURCE_FILTER='-'
+    fi
+fi
+IMAGE_UUID="$(imgadm avail "$IMAGE_FILTER" -H -o uuid,version,source,name -s -version,-name,-published_at,uuid | grep -- "$IMAGE_SOURCE_FILTER" | grep -- "$IMAGE_NAME" | grep -Ev -- "$IMAGE_IGNORE_FILTER" | head -n1 | awk '{print $1}')"
+if [ -z "$IMAGE_UUID" ] ; then
+    echo >&2 "ERROR: No matching image found for \"$IMAGE_NAME\"!"
+    exit 1
+fi
+IMAGE_REQUIRED_BRAND="$(imgadm show "$IMAGE_UUID" | json requirements.brand)"
+if [ -n "$IMAGE_REQUIRED_BRAND" ] && [ "$IMAGE_REQUIRED_BRAND" != "$ZONE_BRAND" ] ; then
+    echo >&2 "ERROR: Image \"$IMAGE_UUID\" requires \"$IMAGE_REQUIRED_BRAND\"!"
+    exit 1
+fi
+if ! $DRY_RUN ; then
+    imgadm import "$IMAGE_UUID"
+fi
+
+# Get resolvers and domain
+DNS_RESOLVERS="$(sed -n -E 's/^dns_resolvers=//p' /usbkey/config | sed -e 's/,/", "/g')"
+DNS_DOMAIN="$(sed -n -E 's/^dns_domain=//p' /usbkey/config)"
+
+# Retrieve brand-specific zone properties
+ZONE_BRAND_PROPERTIES=''
+IMAGE="\"image_uuid\": \"$IMAGE_UUID\", \"delegate_dataset\": $DELEGATE_ZFS_DATASET,"
+NIC_PROPERTIES="\"ips\": [\"dhcp\", \"addrconf\"],"
+METADATA_PROPERTIES=''
+if [ "$ZONE_BRAND" = 'lx' ] ; then
+    ZONE_BRAND_PROPERTIES="\"kernel_version\": \"$(imgadm show "$IMAGE_UUID" | json tags.kernel_version)\","
+fi
+if [ "$ZONE_BRAND" = 'kvm' ] || [ "$ZONE_BRAND" = 'bhyve' ] ; then
+    ZONE_BRAND_PROPERTIES="\"vcpus\": \"1\", \"ram\": \"512\","
+    IMAGE_REQUIRED_BOOTROM="$(imgadm show "$IMAGE_UUID" | json requirements.bootrom)"
+    if [ -n "$IMAGE_REQUIRED_BOOTROM" ] ; then
+        ZONE_BRAND_PROPERTIES="\"bootrom\": \"$IMAGE_REQUIRED_BOOTROM\",$ZONE_BRAND_PROPERTIES"
+    fi
+    IMAGE="\"disks\": [{\"boot\": true, \"image_uuid\": \"$IMAGE_UUID\", \"model\": \"virtio\"}],"
+    METADATA_PROPERTIES="\"cloud-init:user-data\": \"#cloud-config\\n\\npackage_update: true\\npackage_upgrade: true\\nruncmd:\\n  - [ passwd, -d, root ]\\n  - [ bash, -c, 'mkdir -p /etc/systemd/system/serial-getty@ttyS0.service.d && echo -e \\\"[Service]\\\\nExecStart=\\\\n\$(systemctl cat serial-getty@ttyS0.service | sed -E ''s#^ExecStart=-/sbin/agetty #ExecStart=-/sbin/agetty -a root #'' | grep -E ''^ExecStart='')\\\" > /etc/systemd/system/serial-getty@ttyS0.service.d/override.conf && systemctl daemon-reload && systemctl restart serial-getty@ttyS0.service' ]\\n  - [ bash, -c, 'mkdir -p /root/.ssh && echo ''$(find /root/.ssh -type f -name 'id_*.pub' -exec cat {} \; | gzip -9 | openssl base64 | tr -d '\n')'' | base64 -d | gzip -d >> /root/.ssh/authorized_keys' ]\\n  - [ bash, -c, 'apt-get update && apt-get install -y --no-install-recommends figlet && echo -e \\\"\\\\n\$(figlet -w160 \$(hostname))\\\\n\\\" > /etc/motd' ]\\n  - [ bash, -c, 'echo ''$(cat /opt/custom/cfg/root/root/.bashrc | gzip -9 | openssl base64 | tr -d '\n')'' | base64 -d | gzip -d > /root/.bashrc' ]\\n  - [ bash, -c, 'echo ''$(cat /opt/custom/cfg/root/root/.vimrc | gzip -9 | openssl base64 | tr -d '\n')'' | base64 -d | gzip -d > /root/.vimrc' ]\\n\""
+    NIC_PROPERTIES="\"ips\": [\"dhcp\"], \"model\": \"virtio\","
+fi
+
+# Set VLAN ID
+if [ "$VLAN_ID" != '0' ] ; then
+    NIC_PROPERTIES="$NIC_PROPERTIES \"vlan_id\": $VLAN_ID,"
+fi
+
+# Create zone definition JSON
+VM_JSON="{
+  \"brand\": \"$ZONE_BRAND\",
+  $ZONE_BRAND_PROPERTIES
+  \"alias\": \"$ZONE_NAME\",
+  \"hostname\": \"$ZONE_NAME\",
+  $IMAGE
+  \"resolvers\": [\"$DNS_RESOLVERS\"],
+  \"dns_domain\": \"$DNS_DOMAIN\",
+  \"customer_metadata\": {
+    $METADATA_PROPERTIES
+  },
+  \"nics\": [
+    {
+      \"interface\": \"net0\",
+      \"nic_tag\": \"admin\",
+      $NIC_PROPERTIES
+      \"primary\": true
+    }
+  ]
+}"
+VM_JSON="$( ( print -R "$VM_JSON" ; print -R "$ADDITIONAL_JSON" ) | json --merge --output json)"
+
+if ! ( print -R "$VM_JSON" | json -q --validate ) ; then
+    echo >&2 "ERROR: Invalid JSON was generated:"
+    print -R "$VM_JSON"
+    exit 1
+fi
+
+# Create zone
+if $DRY_RUN ; then
+    print -R "$VM_JSON"
+    exit
+else
+    echo 'Creating zone...'
+    print -R "$VM_JSON" | vmadm create
+fi
+ZONE_UUID="$(vmadm lookup alias="$ZONE_NAME")"
+
+# Configure zone
+echo 'Configuring zone...'
+if [ "$ZONE_BRAND" != 'kvm' ] && [ "$ZONE_BRAND" != 'bhyve' ] ; then
+    sleep 10
+else
+    zfs set quota=25G "zones/$ZONE_UUID"
+fi
+if [ "$DELEGATE_ZFS_DATASET" = 'true' ] ; then
+    zlogin "$ZONE_UUID" 'zfs set mountpoint=/data zones/$(zonename)/data'
+fi
+if [ "$ZONE_BRAND" = 'joyent' ] || [ "$ZONE_BRAND" = 'joyent-minimal' ] ; then
+    zlogin "$ZONE_UUID" 'pkgin -y update && pkgin -y upgrade && pkgin -y install figlet && echo -e "\n$(figlet -w160 $(hostname))\n" > /etc/motd'
+    grep '^root:' /etc/mail/aliases | grep '@' | zlogin "$ZONE_UUID" 'cat - | tee -a /etc/mail/aliases >> /opt/local/etc/postfix/aliases && newaliases && postconf -e "smtp_host_lookup = dns, native" "mydestination = \$myhostname, localhost.\$mydomain, localhost.local, localhost" && postfix check && mkfifo /var/spool/postfix/public/pickup && svcadm enable postfix'
+fi
+if [ "$ZONE_BRAND" = 'lx' ] ; then
+    echo "$ZONE_NAME" | zlogin "$ZONE_UUID" 'cat - > /etc/hostname && echo "inet $(cat /etc/hostname)" > /etc/hostname.eth0 && sed -i -E "s/^(127\.0\.0\.1[ \t].+)$/\1 $(cat /etc/hostname)/" /etc/hosts && hostname $(cat /etc/hostname)'
+    zlogin "$ZONE_UUID" 'apt-get update && apt-get dist-upgrade -y && apt-get install -y --no-install-recommends figlet && echo -e "\n$(figlet -w160 $(hostname))\n" > /etc/motd'
+fi
+if [ "$ZONE_BRAND" != 'kvm' ] && [ "$ZONE_BRAND" != 'bhyve' ] ; then
+    find /root/.ssh -type f -name 'id_*.pub' -exec cat {} \; | zlogin "$ZONE_UUID" 'mkdir -p /root/.ssh && cat - >> /root/.ssh/authorized_keys'
+    cat /opt/custom/cfg/root/root/.bashrc | zlogin "$ZONE_UUID" 'cat - > /root/.bashrc'
+    cat /opt/custom/cfg/root/root/.vimrc | zlogin "$ZONE_UUID" 'cat - > /root/.vimrc'
+fi
+
+# Log in into zone
+if [ "$ZONE_BRAND" = 'kvm' ] ; then
+    exec vmadm console "$ZONE_UUID"
+elif [ "$ZONE_BRAND" = 'bhyve' ] ; then
+    exec zlogin -C "$ZONE_UUID"
+else
+    exec zlogin "$ZONE_UUID"
+fi

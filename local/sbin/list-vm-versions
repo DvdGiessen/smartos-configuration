@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+# Check environment
+if [ "$(id -u)" != '0' ]; then
+       echo >&2 'ERROR: This script must be run as root'
+          exit 1
+fi
+if [ "$(zonename)" != 'global' ] ; then
+        echo >&2 'ERROR: This script must be run from the global zone.'
+            exit 1
+fi
+
+# Determine foreach command
+FOREACH="xargs -n1 -I{} sh -c"
+if command -v parallel >/dev/null 2>&1 ; then
+    FOREACH="parallel --keep-order"
+fi
+
+# Print versions of all zones
+vmadm list -s alias | awk '{printf("%-'"$(vmadm list | wc -L)"'s\n",$0)}' | paste - <(echo IMAGE ; vmadm list -p -o alias,uuid,image_uuid -s alias | cut -d: -f2-3 | $FOREACH 'ROW={} ; IMAGE_UUID="$(echo "$ROW" | cut -d: -f2)" ; if [ -n "$IMAGE_UUID" ] ; then echo "$IMAGE_UUID" ; else vmadm get "$(echo "$ROW" | cut -d: -f1)" | json disks.0.image_uuid ; fi' | $FOREACH 'IMAGE_UUID={} ; if [ -n "$IMAGE_UUID" ] ; then imgadm get $IMAGE_UUID | json -a manifest.name manifest.version | tr " " / ; else echo - ; fi')

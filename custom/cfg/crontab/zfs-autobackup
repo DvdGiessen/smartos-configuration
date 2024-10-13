@@ -1,0 +1,1 @@
+30 3 * * * zfs-autobackup --allow-empty --clear-refreservation --clear-mountpoint --zfs-compressed --buffer 128M --ssh-target REMOTEHOSTNAME AUTOBACKUPZFSPROPERTY REMOTEDATASET

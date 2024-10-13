@@ -1,0 +1,1 @@
+30 8 * * * zpool status -x | grep -v 'healthy'

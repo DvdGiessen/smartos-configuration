@@ -1,0 +1,45 @@
+#!/bin/bash
+set -euo pipefail
+
+print_usage() {
+    echo "Usage: $(basename "$0") [--align left|right]"
+    echo ''
+    exit 1
+}
+
+# Define argument variables
+ALIGNMENT=''
+
+# Check and parse arguments
+while [ $# -ge 1 ] ; do
+    case "$1" in
+        '-?'|-h|--help)
+            print_usage
+        ;;
+        --align)
+            if [[ $# -le 1 ]] ; then
+                echo >&2 "Missing argument for $1"
+                exit 1
+            fi
+            shift
+            ALIGNMENT="$1"
+            shift
+        ;;
+        *)
+            echo >&2 "Unknown argument: '$1'"
+            exit 1
+        ;;
+    esac
+done
+
+# Supported shorthands for alignment
+[[ "$ALIGNMENT" == 'left' ]] && ALIGNMENT='-36'
+[[ "$ALIGNMENT" == 'right' ]] && ALIGNMENT='36'
+
+if ! echo "$ALIGNMENT" | grep -qE '^-?([1-9][0-9]*)?$' ; then
+    echo >&2 "Invalid alignment: '$ALIGNMENT'"
+    exit 1
+fi
+
+# Replace all UUID's with the alias, optionally applying the given alignment
+sed -f <(vmadm list -H -o uuid,alias | sed -e 's/[]\/$*.^[]/\\&/g' | awk '{ printf("s/%s/%'"$ALIGNMENT"'s/\n", $1, $2) }')

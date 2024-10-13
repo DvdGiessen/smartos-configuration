@@ -1,0 +1,107 @@
+#!/bin/sh
+set -eu
+
+# Check environment
+if [ "$(id -u)" != '0' ]; then
+   echo 1>&2 'ERROR: This script must be run as root'
+   exit 1
+fi
+if [ "$(zonename)" != 'global' ] ; then
+    echo 1>&2 'ERROR: This script must be run from the global zone.'
+    exit 1
+fi
+
+# Usage / help text
+print_usage() {
+    echo "Releases *all* holds on a given ZFS filesystem and its childen."
+    echo ""
+    echo "Usage: $(basename "$0") [--dry-run] filesystem"
+    echo ""
+    exit 1
+}
+
+# Define argument variables
+DRY_RUN=false
+FILESYSTEM_NAME=''
+
+# Check and parse arguments
+I=0
+while [ $# -ge 1 ] ; do
+    case "$1" in
+        "-?"|-h|--help)
+            print_usage
+        ;;
+        --dry-run)
+            DRY_RUN=true
+        ;;
+        *)
+            case $I in
+                0)
+                    FILESYSTEM_NAME="$1"
+                ;;
+                *)
+                    echo >&2 "Unknown parameter \"$1\""
+                    exit 1
+                ;;
+            esac
+            I=$((I+1))
+        ;;
+    esac
+    shift
+done
+if [ $I -lt 1 ] ; then
+    print_usage
+fi
+
+# Check if the filesystem exists
+if ! zfs list -H "$FILESYSTEM_NAME" >/dev/null 2>&1 ; then
+    # Autodetect using an UUID and prefix zones/
+    if echo "$FILESYSTEM_NAME" | grep -qxiE '^[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$' ; then
+        FILESYSTEM_NAME="zones/$FILESYSTEM_NAME"
+    else
+        # Autodetect using an VM alias
+        ZONE_UUID="$(vmadm lookup alias="$FILESYSTEM_NAME")"
+        if [ -n "$ZONE_UUID" ] ; then
+            FILESYSTEM_NAME="zones/$ZONE_UUID"
+        else
+            echo >&2 "Filesystem '$FILESYSTEM_NAME' does not exist!"
+            exit 1
+        fi
+    fi
+    if zfs list -H "$FILESYSTEM_NAME" >/dev/null 2>&1 ; then
+        echo "Autocorrected filesystem name to '$FILESYSTEM_NAME'"
+    else
+        echo >&2 "Could not find the given image, zone, or filesystem."
+        exit 1
+    fi
+fi
+
+# Make list of holds to release
+FILESYSTEM_HOLDS="$(zfs list -r -t snapshot -H -o name "$FILESYSTEM_NAME" | xargs zfs holds -r -H | awk '{print $2, $1}')"
+if [[ -z "$FILESYSTEM_HOLDS" ]] ; then
+    echo "The given filesystem has no holds."
+    exit 0
+fi
+echo "The following holds will be released:"
+echo "$FILESYSTEM_HOLDS" | sed 's/^/ - /'
+
+# Confirm
+if $DRY_RUN ; then
+    echo "Continue (dry run)? [yN] " | tr -d $'\n'
+else
+    echo "Continue? [yN] " | tr -d $'\n'
+fi
+read CONFIRMED
+if echo "$CONFIRMED" | grep -qvxiE "y(es)?" ; then
+    echo "Aborted."
+    exit 1
+fi
+
+# Release the holds (or in dry run mode print the release commands that would be executed)
+if $DRY_RUN ; then
+    echo "$FILESYSTEM_HOLDS" | xargs -n2 echo zfs release -r
+else
+    echo "$FILESYSTEM_HOLDS" | xargs -n2 zfs release -r
+fi
+
+echo Completed.

@@ -1,0 +1,1 @@
+30 8 * * * nvmeadm list | grep -vE '^ ' | cut -d: -f1 | xargs -n1 -I{} sh -c 'nvmeadm -v get-logpage {} health | grep -qE "Device Reliability: +OK" || nvmeadm -v get-logpage {} health'

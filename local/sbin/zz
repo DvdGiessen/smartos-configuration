@@ -1,0 +1,70 @@
+#!/bin/sh
+set -eu
+
+# Check environment
+if [ "$(id -u)" != '0' ]; then
+   echo >&2 'ERROR: This script must be run as root'
+   exit 1
+fi
+if [ "$(zonename)" != 'global' ] ; then
+    echo >&2 'ERROR: This script must be run from the global zone.'
+    exit 1
+fi
+
+# Check parameters
+if [ $# -le 0 ] ; then
+    echo "Usage: $(basename "$0") name"
+    exit 1
+fi
+
+# Determine zone UUID
+if echo "$1" | grep -qxiE '^[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$' ; then
+    ZONE_UUID="$1"
+else
+    ZONE_UUID="$(vmadm lookup alias="$1")"
+    if [ -z "$ZONE_UUID" ] ; then
+        ZONE_UUID="$(vmadm list -po uuid,alias | grep -- "$1" | cut -d: -f1)"
+    fi
+    if [ -z "$ZONE_UUID" ] ; then
+        echo >&2 'ERROR: No matching zone name found'
+        exit 1
+    fi
+    if [ "$(echo "$ZONE_UUID" | wc -l)" -gt 1 ] ; then
+        echo >&2 "ERROR: multiple matching zones: $(echo "$ZONE_UUID" | xargs -n1 vmadm get | json -ga alias | xargs echo)"
+        exit 1
+    fi
+fi
+shift
+
+# A specific internal_metadata property can be used to connect to this zone over SSH instead of via a serial console
+ZONE_SSH_HOST="$(vmadm get "$ZONE_UUID" | json internal_metadata.zz:ssh_host)"
+if [ -n "$ZONE_SSH_HOST" ] ; then
+    exec ssh -A $([ -t 0 ] || echo -- '-n') -o "BatchMode $([ -t 0 ] && echo no || echo yes)" -o "StrictHostKeyChecking accept-new" -o "CheckHostIP no" -o "PasswordAuthentication no" -o "KbdInteractiveAuthentication no" -o "IdentitiesOnly yes"  "$ZONE_SSH_HOST" "$@"
+fi
+
+# Diffent brands require different methods
+ZONE_BRAND="$(zonecfg -u "$ZONE_UUID" info brand | awk '{print $2}')"
+if [ "$ZONE_BRAND" = 'kvm' ] || [ "$ZONE_BRAND" = 'bhyve' ] ; then
+    if [ $# -ge 1 ] ; then
+        echo >&2 "ERROR: Zone '$(vmadm get "$ZONE_UUID" | json alias)' with brand $ZONE_BRAND uses a serial console which does not support running a command"
+        echo >&2 'Hint: you can set up SSH instead: `echo '"'"'{"set_internal_metadata":{"zz:ssh_host": "'"$(vmadm get "$ZONE_UUID" | json alias).$(grep ^dns_domain= /usbkey/config | cut -d= -f2)"'"}}'"'"' | vmadm update '"$ZONE_UUID"'`'
+        exit 1
+    fi
+
+    if [ "$ZONE_BRAND" = 'kvm' ] ; then
+        echo >&2 '[ Escape sequence: ENTER Ctrl-] . ]'
+        exec vmadm console "$ZONE_UUID"
+    elif [ "$ZONE_BRAND" = 'bhyve' ] ; then
+        echo >&2 '[ Escape sequence: ENTER ~ . ]'
+        if [[ -n "$SSH_CLIENT" ]] || [[ -n "$SSH_TTY" ]] ; then
+            echo >&2 '[ Note: You seem to be connected over SSH. Remember to press ~ multiple times! ]'
+        fi
+        exec zlogin -C "$ZONE_UUID"
+    fi
+else
+    if [ -t 0 ] ; then
+        exec zlogin "$ZONE_UUID" "$@"
+    else
+        exec zlogin -n "$ZONE_UUID" "$@"
+    fi
+fi

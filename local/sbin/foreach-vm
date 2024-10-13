@@ -1,0 +1,62 @@
+#!/bin/sh
+set -eu
+
+# Check environment
+if [ "$(id -u)" != '0' ]; then
+   echo >&2 'ERROR: This script must be run as root'
+   exit 1
+fi
+if [ "$(zonename)" != 'global' ] ; then
+    echo >&2 'ERROR: This script must be run from the global zone.'
+    exit 1
+fi
+if ! command -v zz >/dev/null 2>&1 ; then
+    echo >&2 'ERROR: This script requires the "zz" command to be available.'
+fi
+
+print_usage() {
+    echo "Usage: $(basename "$0") [--dry-run] [--filter vm-filter] command"
+    echo ""
+    exit 1
+}
+
+# Define argument variables
+DRY_RUN=false
+VM_FILTERS='state=running'
+
+# Check and parse arguments
+while [ $# -ge 1 ] ; do
+    case "$1" in
+        "-?"|-h|--help)
+            print_usage
+        ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+        ;;
+        --filter)
+            if [ $# -le 1 ] ; then
+                echo >&2 "Missing argument for $1"
+                exit 1
+            fi
+            shift
+            VM_FILTERS="$VM_FILTERS\n$1"
+            shift
+        ;;
+        *)
+            break
+        ;;
+    esac
+done
+if [ $# -le 0 ] ; then
+    print_usage
+fi
+
+FOREACH="xargs -n1 -I{}"
+if command -v parallel >/dev/null 2>&1 ; then
+    FOREACH="parallel --keep-order"
+fi
+if $DRY_RUN ; then
+    FOREACH="$FOREACH echo"
+fi
+echo "$VM_FILTERS" | xargs vmadm list -p -o uuid,alias -s alias | cut -d: -f1 | $FOREACH zz {} "$@"

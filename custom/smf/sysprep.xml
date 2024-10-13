@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE service_bundle SYSTEM "/usr/share/lib/xml/dtd/service_bundle.dtd.1">
+<!-- For a general cheatsheet for SMF XML entries, see http://web.archive.org/web/20100130083720/http://www.cuddletech.com/blog/pivot/entry.php?id=182 -->
+<service_bundle type="manifest" name="smartos:sysprep">
+    <!--  Defines a startup service which will run our setup script. -->
+    <service name="smartos/sysprep" type="service" version="0">
+        <!-- Creates a (empty) default instance, which is enabled. -->
+        <create_default_instance enabled="true" />
+        <!-- Only allow a single running instance at any time. -->
+        <single_instance />
+        <!-- Dependencies: we need the network, filesystem and VM management daemon initialized before we can run our startup script. -->
+        <dependency name="filesystem" grouping="require_all" restart_on="none" type="service">
+            <service_fmri value="svc:/system/filesystem/local" />
+        </dependency>
+        <dependency name="net-physical" grouping="require_all" restart_on="none" type="service">
+            <service_fmri value="svc:/network/physical" />
+        </dependency>
+        <dependency name="vm-manager" grouping="require_all" restart_on="none" type="service">
+            <service_fmri value="svc:/system/smartdc/vmadmd" />
+        </dependency>
+        <!-- Defines the two execution methods, namely, start and stop. -->
+        <exec_method name="start" type="method" exec="/opt/custom/script/sysprep.sh %m" timeout_seconds="0" />
+        <exec_method name="stop" type="method" exec="/opt/custom/script/sysprep.sh %m" timeout_seconds="60" />
+        <!-- Other properties for the startup instance, see https://www.illumos.org/man/8/svc.startd -->
+        <property_group name="startd" type="framework">
+            <propval name="duration" type="astring" value="transient" />
+        </property_group>
+        <stability value="Stable" />
+        <template>
+            <common_name>
+                <loctext xml:lang="C">Script to setup the SmartOS global zone on boot</loctext>
+            </common_name>
+        </template>
+    </service>
+</service_bundle>

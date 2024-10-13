@@ -1,0 +1,3 @@
+#!/bin/bash
+set -euo pipefail
+for VM in $(vmadm list -p -o uuid,type,alias state=stopped) ; do if [[ "$(read -e -p "Start $(echo $VM | cut -d: -f2) zone $(echo $VM | cut -d: -f3)? [y/N] " ; echo $REPLY)" == [Yy]* ]] ; then vmadm start $(echo $VM | cut -d: -f1) ; fi ; done
