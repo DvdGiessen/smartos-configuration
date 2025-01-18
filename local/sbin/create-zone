@@ -247,12 +247,12 @@ if [ "$DELEGATE_ZFS_DATASET" = 'true' ] ; then
     zlogin "$ZONE_UUID" 'zfs set mountpoint=/data zones/$(zonename)/data'
 fi
 if [ "$ZONE_BRAND" = 'joyent' ] || [ "$ZONE_BRAND" = 'joyent-minimal' ] ; then
-    zlogin "$ZONE_UUID" 'pkgin -y update && pkgin -y upgrade && pkgin -y install figlet && echo -e "\n$(figlet -w160 $(hostname))\n" > /etc/motd'
+    zlogin "$ZONE_UUID" 'pkgin -y update && pkgin -y full-upgrade && pkgin -y install figlet && echo -e "\n$(figlet -w160 $(hostname))\n" > /etc/motd'
     grep '^root:' /etc/mail/aliases | grep '@' | zlogin "$ZONE_UUID" 'cat - | tee -a /etc/mail/aliases >> /opt/local/etc/postfix/aliases && newaliases && postconf -e "smtp_host_lookup = dns, native" "mydestination = \$myhostname, localhost.\$mydomain, localhost.local, localhost" && postfix check && mkfifo /var/spool/postfix/public/pickup && svcadm enable postfix'
 fi
 if [ "$ZONE_BRAND" = 'lx' ] ; then
     echo "$ZONE_NAME" | zlogin "$ZONE_UUID" 'cat - > /etc/hostname && echo "inet $(cat /etc/hostname)" > /etc/hostname.eth0 && sed -i -E "s/^(127\.0\.0\.1[ \t].+)$/\1 $(cat /etc/hostname)/" /etc/hosts && hostname $(cat /etc/hostname)'
-    zlogin "$ZONE_UUID" 'apt-get update && apt-get dist-upgrade -y && apt-get install -y --no-install-recommends figlet && echo -e "\n$(figlet -w160 $(hostname))\n" > /etc/motd'
+    zlogin "$ZONE_UUID" 'apt-get update && apt-get full-upgrade -y && apt-get install -y --no-install-recommends figlet && echo -e "\n$(figlet -w160 $(hostname))\n" > /etc/motd'
 fi
 if [ "$ZONE_BRAND" != 'kvm' ] && [ "$ZONE_BRAND" != 'bhyve' ] ; then
     find /root/.ssh -type f -name 'id_*.pub' -exec cat {} \; | zlogin "$ZONE_UUID" 'mkdir -p /root/.ssh && cat - >> /root/.ssh/authorized_keys'
