@@ -39,7 +39,15 @@ shift
 # A specific internal_metadata property can be used to connect to this zone over SSH instead of via a serial console
 ZONE_SSH_HOST="$(vmadm get "$ZONE_UUID" | json internal_metadata.zz:ssh_host)"
 if [ -n "$ZONE_SSH_HOST" ] ; then
-    exec ssh -A $([ -t 0 ] || echo -- '-n') -o "BatchMode $([ -t 0 ] && echo no || echo yes)" -o "StrictHostKeyChecking accept-new" -o "CheckHostIP no" -o "PasswordAuthentication no" -o "KbdInteractiveAuthentication no" -o "IdentitiesOnly yes"  "$ZONE_SSH_HOST" "$@"
+    if [ $# -le 1 ] && ! [ -t 0 ] ; then
+        echo >&2 "ERROR: Cannot run interactively when input is not a terminal"
+        if [ -v SSH_CLIENT ] && (! [ -v SSH_TTY ] || [ -z "$SSH_TTY" ]) ; then
+            echo >&2 'Hint: To force allocating a pseudo-terminal you may need to pass the -t option to ssh'
+        fi
+        exit 1
+    else
+        exec ssh -A $([ -t 0 ] || printf %s -n) -o "BatchMode $([ -t 0 ] && echo no || echo yes)" -o "StrictHostKeyChecking accept-new" -o "CheckHostIP no" -o "Ciphers aes128-ctr" -o "PasswordAuthentication no" -o "KbdInteractiveAuthentication no" -o "IdentitiesOnly yes"  "$ZONE_SSH_HOST" "$@"
+    fi
 fi
 
 # Diffent brands require different methods
@@ -56,7 +64,7 @@ if [ "$ZONE_BRAND" = 'kvm' ] || [ "$ZONE_BRAND" = 'bhyve' ] ; then
         exec vmadm console "$ZONE_UUID"
     elif [ "$ZONE_BRAND" = 'bhyve' ] ; then
         echo >&2 '[ Escape sequence: ENTER ~ . ]'
-        if [[ -n "$SSH_CLIENT" ]] || [[ -n "$SSH_TTY" ]] ; then
+        if [ -v SSH_CLIENT ] || [ -v SSH_TTY ] ; then
             echo >&2 '[ Note: You seem to be connected over SSH. Remember to press ~ multiple times! ]'
         fi
         exec zlogin -C "$ZONE_UUID"
@@ -64,6 +72,12 @@ if [ "$ZONE_BRAND" = 'kvm' ] || [ "$ZONE_BRAND" = 'bhyve' ] ; then
 else
     if [ -t 0 ] ; then
         exec zlogin "$ZONE_UUID" "$@"
+    elif [ $# -le 1 ] ; then
+        echo >&2 "ERROR: Cannot run interactively when input is not a terminal"
+        if [ -v SSH_CLIENT ] && (! [ -v SSH_TTY ] || [ -z "$SSH_TTY" ]) ; then
+            echo >&2 'Hint: To force allocating a pseudo-terminal you may need to pass the -t option to ssh'
+        fi
+        exit 1
     else
         exec zlogin -n "$ZONE_UUID" "$@"
     fi
