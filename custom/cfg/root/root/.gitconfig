@@ -1,0 +1,44 @@
+[init]
+    defaultBranch = main
+
+[status]
+    submoduleSummary = true
+    showStash = true
+
+[log]
+    date = iso-local
+
+[branch]
+    sort = -committerdate
+
+[diff]
+    algorithm = histogram
+    submodule = log
+    renames = copies
+
+[fetch]
+    parallel = 0
+
+[transfer]
+    fsckObjects = true
+
+[pull]
+    rebase = true
+
+[push]
+    autoSetupRemote = true
+    followTags = true
+
+[merge]
+    autoStash = true
+    conflictStyle = zdiff3
+
+[rebase]
+    abbreviateCommands = true
+    autoStash = true
+    autoSquash = true
+    updateRefs = true
+
+[rerere]
+    enabled = true
+

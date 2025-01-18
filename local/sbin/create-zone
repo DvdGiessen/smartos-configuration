@@ -188,7 +188,7 @@ if [ "$ZONE_BRAND" = 'kvm' ] || [ "$ZONE_BRAND" = 'bhyve' ] ; then
         ZONE_BRAND_PROPERTIES="\"bootrom\": \"$IMAGE_REQUIRED_BOOTROM\",$ZONE_BRAND_PROPERTIES"
     fi
     IMAGE="\"disks\": [{\"boot\": true, \"image_uuid\": \"$IMAGE_UUID\", \"model\": \"virtio\"}],"
-    METADATA_PROPERTIES="\"cloud-init:user-data\": \"#cloud-config\\n\\npackage_update: true\\npackage_upgrade: true\\nruncmd:\\n  - [ passwd, -d, root ]\\n  - [ bash, -c, 'mkdir -p /etc/systemd/system/serial-getty@ttyS0.service.d && echo -e \\\"[Service]\\\\nExecStart=\\\\n\$(systemctl cat serial-getty@ttyS0.service | sed -E ''s#^ExecStart=-/sbin/agetty #ExecStart=-/sbin/agetty -a root #'' | grep -E ''^ExecStart='')\\\" > /etc/systemd/system/serial-getty@ttyS0.service.d/override.conf && systemctl daemon-reload && systemctl restart serial-getty@ttyS0.service' ]\\n  - [ bash, -c, 'mkdir -p /root/.ssh && echo ''$(find /root/.ssh -type f -name 'id_*.pub' -exec cat {} \; | gzip -9 | openssl base64 | tr -d '\n')'' | base64 -d | gzip -d >> /root/.ssh/authorized_keys' ]\\n  - [ bash, -c, 'apt-get update && apt-get install -y --no-install-recommends figlet && echo -e \\\"\\\\n\$(figlet -w160 \$(hostname))\\\\n\\\" > /etc/motd' ]\\n  - [ bash, -c, 'echo ''$(cat /opt/custom/cfg/root/root/.bashrc | gzip -9 | openssl base64 | tr -d '\n')'' | base64 -d | gzip -d > /root/.bashrc' ]\\n  - [ bash, -c, 'echo ''$(cat /opt/custom/cfg/root/root/.vimrc | gzip -9 | openssl base64 | tr -d '\n')'' | base64 -d | gzip -d > /root/.vimrc' ]\\n\""
+    METADATA_PROPERTIES="\"cloud-init:user-data\": \"#cloud-config\\n\\npackage_update: true\\npackage_upgrade: true\\nruncmd:\\n  - [ passwd, -d, root ]\\n  - [ bash, -c, 'mkdir -p /etc/systemd/system/serial-getty@ttyS0.service.d && echo -e \\\"[Service]\\\\nExecStart=\\\\n\$(systemctl cat serial-getty@ttyS0.service | sed -E ''s#^ExecStart=-/sbin/agetty #ExecStart=-/sbin/agetty -a root #'' | grep -E ''^ExecStart='')\\\" > /etc/systemd/system/serial-getty@ttyS0.service.d/override.conf && systemctl daemon-reload && systemctl restart serial-getty@ttyS0.service' ]\\n  - [ bash, -c, 'mkdir -p /root/.ssh && echo ''$(find /root/.ssh -type f -name 'id_*.pub' -exec cat {} \; | gzip -9 | openssl base64 | tr -d '\n')'' | base64 -d | gzip -d >> /root/.ssh/authorized_keys' ]\\n  - [ bash, -c, 'apt-get update && apt-get install -y --no-install-recommends figlet && echo -e \\\"\\\\n\$(figlet -w160 \$(hostname))\\\\n\\\" > /etc/motd' ]\\n  - [ bash, -c, 'echo ''$(cd /opt/custom/cfg/root/root && tar cf - .bashrc .vimrc .tmux.conf .gitconfig | gzip -9 | openssl base64 | tr -d '\n')'' | base64 -d | gzip -d | tar xf - -C /root/' ]\\n\""
     NIC_PROPERTIES="\"ips\": [\"dhcp\"], \"model\": \"virtio\","
 fi
 
@@ -256,8 +256,7 @@ if [ "$ZONE_BRAND" = 'lx' ] ; then
 fi
 if [ "$ZONE_BRAND" != 'kvm' ] && [ "$ZONE_BRAND" != 'bhyve' ] ; then
     find /root/.ssh -type f -name 'id_*.pub' -exec cat {} \; | zlogin "$ZONE_UUID" 'mkdir -p /root/.ssh && cat - >> /root/.ssh/authorized_keys'
-    cat /opt/custom/cfg/root/root/.bashrc | zlogin "$ZONE_UUID" 'cat - > /root/.bashrc'
-    cat /opt/custom/cfg/root/root/.vimrc | zlogin "$ZONE_UUID" 'cat - > /root/.vimrc'
+    (cd /opt/custom/cfg/root/root && tar cf - .bashrc .vimrc .tmux.conf .gitconfig) | zlogin "$ZONE_UUID" 'tar xf - -C /root/'
 fi
 
 # Log in into zone
