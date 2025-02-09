@@ -39,7 +39,7 @@ shift
 # A specific internal_metadata property can be used to connect to this zone over SSH instead of via a serial console
 ZONE_SSH_HOST="$(vmadm get "$ZONE_UUID" | json internal_metadata.zz:ssh_host)"
 if [ -n "$ZONE_SSH_HOST" ] ; then
-    if [ $# -le 1 ] && ! [ -t 0 ] ; then
+    if [ $# -le 0 ] && ! [ -t 0 ] ; then
         echo >&2 "ERROR: Cannot run interactively when input is not a terminal"
         if [ -v SSH_CLIENT ] && (! [ -v SSH_TTY ] || [ -z "$SSH_TTY" ]) ; then
             echo >&2 'Hint: To force allocating a pseudo-terminal you may need to pass the -t option to ssh'
@@ -72,7 +72,7 @@ if [ "$ZONE_BRAND" = 'kvm' ] || [ "$ZONE_BRAND" = 'bhyve' ] ; then
 else
     if [ -t 0 ] ; then
         exec zlogin "$ZONE_UUID" "$@"
-    elif [ $# -le 1 ] ; then
+    elif [ $# -le 0 ] ; then
         echo >&2 "ERROR: Cannot run interactively when input is not a terminal"
         if [ -v SSH_CLIENT ] && (! [ -v SSH_TTY ] || [ -z "$SSH_TTY" ]) ; then
             echo >&2 'Hint: To force allocating a pseudo-terminal you may need to pass the -t option to ssh'
