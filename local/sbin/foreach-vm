@@ -58,7 +58,7 @@ fi
 
 FOREACH="xargs -n1 -I{}"
 if command -v parallel >/dev/null 2>&1 ; then
-    FOREACH="parallel --keep-order"
+    FOREACH="parallel --keep-order --quote"
 fi
 if $DRY_RUN ; then
     FOREACH="$FOREACH echo"
