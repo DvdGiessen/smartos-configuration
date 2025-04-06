@@ -331,7 +331,7 @@ if ! hash osc52-copy &>/dev/null ; then
         }
     elif hash uuencode &>/dev/null ; then
         osc52-copy() {
-            printf "\x1B]52;c;i"
+            printf "\x1B]52;c;"
             cat "${1:--}" | uuencode -m - | sed '1d;$d' | tr -d '\r\n'
             printf "\x07"
         }
