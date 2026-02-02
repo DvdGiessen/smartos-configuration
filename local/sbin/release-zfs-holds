@@ -78,7 +78,7 @@ fi
 
 # Make list of holds to release
 FILESYSTEM_HOLDS="$(zfs list -r -t snapshot -H -o name "$FILESYSTEM_NAME" | xargs zfs holds -r -H | awk '{print $2, $1}')"
-if [[ -z "$FILESYSTEM_HOLDS" ]] ; then
+if [ -z "$FILESYSTEM_HOLDS" ] ; then
     echo "The given filesystem has no holds."
     exit 0
 fi
